@@ -89,9 +89,6 @@
   min-width: intrinsic;
   min-width: -moz-max-content;
   min-height: 100%;
-}
-
-.treeViewTreeInnerContainer {
   background: -moz-linear-gradient(white, white 50%, #F0F5FF 50%, #F0F5FF);
   background: -webkit-linear-gradient(white, white 50%, #F0F5FF 50%, #F0F5FF);
   background: linear-gradient(white, white 50%, #F0F5FF 50%, #F0F5FF);
