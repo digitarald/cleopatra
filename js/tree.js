@@ -298,18 +298,11 @@ TreeView.prototype = {
     var hasChildren = ("children" in data) && (data.children.length > 0);
     if (!hasChildren)
       div.classList.add("leaf");
-    var treeLine = document.createElement("div");
-    treeLine.className = "treeLine";
     div.depth = parentNode ? parentNode.depth + 1 : 0;
-    treeLine.innerHTML = this._HTMLForFunction(data, div.depth);
+    div.innerHTML = this._HTMLForFunction(data, div.depth);
     // When this item is toggled we will expand its children
     div.pendingExpand = [];
-    div.treeLine = treeLine;
     div.data = data;
-    // Useful for debugging
-    //this.uniqueID = this.uniqueID || 0;
-    //div.id = "Node" + this.uniqueID++;
-    div.appendChild(treeLine);
     div.treeChildren = [];
     div.treeParent = parentNode;
     if (hasChildren) {
@@ -556,13 +549,13 @@ TreeView.prototype = {
   },
   _select: function TreeView__select(li) {
     if (this._selectedNode != null) {
-      this._selectedNode.treeLine.classList.remove("selected");
+      this._selectedNode.classList.remove("selected");
       this._selectedNode = null;
     }
     if (li) {
-      li.treeLine.classList.add("selected");
+      li.classList.add("selected");
       this._selectedNode = li;
-      var functionName = li.treeLine.querySelector(".functionName");
+      var functionName = li.querySelector(".functionName");
       this._scheduleScrollIntoView(functionName, 400);
       this._fireEvent("select", li.data);
     }

@@ -6,29 +6,28 @@
   line-height: 16px;
   height: 100%;
   outline: none; /* override the browser's focus styling */
-  position: relative;
+  display: flex;
+  flex-flow: column nowrap;
+  align-items: stretch;
 }
 
 .treeHeader {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 16px;
+  display: flex;
+  flex: 0 0 16px;
+  flex-flow: row nowrap;
   margin: 0;
   padding: 0;
-}
-
-.treeColumnHeader {
-  position: absolute;
-  display: block;
+  align-items: stretch;
   background: -moz-linear-gradient(#FFF 45%, #EEE 60%);
   background: -webkit-linear-gradient(#FFF 45%, #EEE 60%);
   background: linear-gradient(#FFF 45%, #EEE 60%);
+}
+
+.treeColumnHeader {
+  display: flex;
+  flex: 0 0 auto;
   margin: 0;
   padding: 0;
-  top: 0;
-  height: 15px;
   line-height: 15px;
   border: 0 solid #CCC;
   border-bottom-width: 1px;
@@ -40,12 +39,10 @@
 }
 
 .treeColumnHeader0 {
-  left: 0;
   width: 86px;
 }
 
 .treeColumnHeader1 {
-  left: 99px;
   width: 35px;
 }
 
@@ -56,59 +53,41 @@
 }
 
 .treeColumnHeader2 {
-  left: 147px;
   width: 20px;
 }
 
 .treeColumnHeader3 {
-  left: 168px;
-  right: 0;
+  flex: 1;
 }
 
 .treeViewTreeOuterContainer {
-  position: absolute;
-  top: 16px;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  flex: 1;
   overflow: auto;
-}
-
-.treeViewNode,
-.treeViewTreeInnerContainer {
-  display: block;
-  margin: 0;
-  padding: 0;
-}
-
-.treeViewNode {
-  white-space: nowrap;
-}
-
-.treeViewTreeInnerContainer {
-  min-width: intrinsic;
-  min-width: -moz-max-content;
-  min-height: 100%;
   background: -moz-linear-gradient(white, white 50%, #F0F5FF 50%, #F0F5FF);
   background: -webkit-linear-gradient(white, white 50%, #F0F5FF 50%, #F0F5FF);
   background: linear-gradient(white, white 50%, #F0F5FF 50%, #F0F5FF);
   background-size: 100px 32px;
 }
-.treeViewTreeInnerContainer>:nth-child(2n+1) {
+
+.treeViewTreeInnerContainer {
+  min-width: intrinsic;
+  min-width: -moz-max-content;
+}
+
+.treeViewNode {
+  white-space: nowrap;
+}
+.treeViewNode:nth-child(2n+1) {
   background-color: white;
 }
-.treeViewTreeInnerContainer>:nth-child(2n) {
+.treeViewNode:nth-child(2n) {
   background-color: #f0f5ff;
 }
 
-.treeLine {
-  background-color: inherit;
-}
 .rowLabel {
   background-color: inherit;
   position: -webkit-sticky;
   position: sticky;
-  flex: none;
   text-align: right;
 }
 
@@ -150,30 +129,22 @@
   color: #999;
 }
 
-.treeViewNode > .treeViewNodeList {
-  margin-left: 1em;
-}
-
-.treeViewNode.collapsed > .treeViewNodeList {
-  display: none;
-}
-
-.treeLine {
+.treeViewNode {
   display: flex;
   width: 100%;
 }
 
-.treeLine.selected {
+.treeViewNode.selected {
   color: black;
   background-color: -moz-dialog;
 }
 
-.treeViewContainer:focus .treeLine.selected {
+.treeViewContainer:focus .treeViewNode.selected {
   color: highlighttext;
   background-color: highlight;
 }
 
-.treeViewContainer:focus .treeLine.selected > .libraryName {
+.treeViewContainer:focus .treeViewNode.selected > .libraryName {
   color: #CCC;
 }
 
@@ -205,29 +176,29 @@
   background-position: -16px 0;
 }
 
-.treeViewNode.collapsed > .treeLine > .expandCollapseButton {
+.treeViewNode.collapsed > .expandCollapseButton {
   background-position: 0 -16px;
 }
 
-.treeViewNode.collapsed > .treeLine > .expandCollapseButton:active:hover {
+.treeViewNode.collapsed > .expandCollapseButton:active:hover {
   background-position: -16px -16px;
 }
 
-.treeViewContainer:focus .treeLine.selected > .expandCollapseButton,
-.treeViewContainer:focus .treeLine.selected > .focusCallstackButton {
+.treeViewContainer:focus .treeViewNode.selected > .expandCollapseButton,
+.treeViewContainer:focus .treeViewNode.selected > .focusCallstackButton {
   background-position: -32px 0;
 }
 
-.treeViewContainer:focus .treeViewNode.collapsed > .treeLine.selected > .expandCollapseButton {
+.treeViewContainer:focus .treeViewNode.collapsed.selected > .expandCollapseButton {
   background-position: -32px -16px;
 }
 
-.treeViewContainer:focus .treeLine.selected > .expandCollapseButton:active:hover,
-.treeViewContainer:focus .treeLine.selected > .focusCallstackButton:active:hover {
+.treeViewContainer:focus .treeViewNode.selected > .expandCollapseButton:active:hover,
+.treeViewContainer:focus .treeViewNode.selected > .focusCallstackButton:active:hover {
   background-position: -48px 0;
 }
 
-.treeViewContainer:focus .treeViewNode.collapsed > .treeLine.selected > .expandCollapseButton:active:hover {
+.treeViewContainer:focus .treeViewNode.collapsed.selected > .expandCollapseButton:active:hover {
   background-position: -48px -16px;
 }
 
@@ -235,6 +206,6 @@
   visibility: hidden;
 }
 
-.treeLine:hover > .focusCallstackButton {
+.treeViewNode:hover > .focusCallstackButton {
   visibility: visible;
 }
