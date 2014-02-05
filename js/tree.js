@@ -2,6 +2,12 @@ var kMaxChunkDuration = 30; // ms
 
 var escape = document.createElement('textarea');
 
+function assert(condition) {
+  if (!condition) {
+    console.log("assertion failed");
+  }
+}
+
 function escapeHTML(html) {
   escape.innerHTML = html;
   return escape.innerHTML;
@@ -34,8 +40,6 @@ var cancelAnimationFrame = window.webkitCancelAnimationFrame ||
 
 function TreeView() {
   this._eventListeners = {};
-  this._pendingActions = [];
-  this._pendingActionsProcessingCallback = null;
 
   this._container = document.createElement("div");
   this._container.className = "treeViewContainer";
@@ -65,8 +69,14 @@ function TreeView() {
   this._busyCover = document.createElement("div");
   this._busyCover.className = "busyCover";
   this._container.appendChild(this._busyCover);
-  this._abortToggleAll = false;
   this.initSelection = true;
+
+  this._rowHeight = 16;
+  this._treeNodes = null;
+  this._treeRows = [];
+  this._callback = null;
+
+  this._scheduledRepaint = null;
 
   var self = this;
   this._container.onkeydown = function (e) {
@@ -83,6 +93,9 @@ function TreeView() {
   this._treeOuterContainer.addEventListener("contextmenu", function(event) {
     self._populateContextMenu(event);
   }, true);
+  this._treeOuterContainer.addEventListener("scroll", function () {
+    self._scheduleRepaint();
+  })
 };
 TreeView.instanceCounter = 0;
 
@@ -115,24 +128,7 @@ TreeView.prototype = {
     if (this._filterByName === "")
       this._filterByName = null;
     this._treeInnerContainer.innerHTML = "";
-    this._treeInnerContainer.data = data[0].getData();
-    if (this._pendingActionsProcessingCallback) {
-      cancelAnimationFrame(this._pendingActionsProcessingCallback);
-      this._pendingActionsProcessingCallback = 0;
-    }
-    this._pendingActions = [];
-
-    this._pendingActions.push({
-      parentElement: this._treeInnerContainer,
-      parentNode: null,
-      data: data[0].getData()
-    });
-    this._processPendingActionsChunk();
-    if (this._initSelection === true) {
-      this._initSelection = false;
-      this._select(this._treeInnerContainer.firstChild);
-      this._toggle(this._treeInnerContainer.firstChild);
-    }
+    this._initWithTreeAndCallback(data.nodeTree, data.getDataForNode);
     AppUI.changeFocus(this._container);
   },
   // Provide a snapshot of the reverse selection to restore with 'invert callback'
@@ -177,20 +173,19 @@ TreeView.prototype = {
   // Take a selection snapshot and restore the selection
   restoreSelectionSnapshot: function TreeView_restoreSelectionSnapshot(snapshot, allowNonContigious) {
     //console.log("restore selection: " + JSON.stringify(snapshot));
-    var currNode = this._treeInnerContainer.firstChild;
+    var currNode = this._treeRows[0];
     if (currNode.data.name == snapshot[0] || snapshot[0] == "(total)") {
       snapshot.shift();
     }
     //dump("len: " + snapshot.length + "\n");
     next_level: while (currNode && snapshot.length > 0) {
       this._toggle(currNode, false, true);
-      this._syncProcessPendingActionProcessing();
-      for (var i = 0; i < currNode.treeChildren.length; i++) {
-        if (currNode.treeChildren[i].data.name == snapshot[0]) {
-          //console.log("Found: " + currNode.treeChildren[i].data.name + "\n");
+      for (var i = 0; i < currNode.visibleChildren.length; i++) {
+        if (currNode.visibleChildren[i].data.name == snapshot[0]) {
+          //console.log("Found: " + currNode.visibleChildren[i].data.name + "\n");
           snapshot.shift();
           this._toggle(currNode, false, true);
-          currNode = currNode.treeChildren[i];
+          currNode = currNode.visibleChildren[i];
           continue next_level;
         }
       }
@@ -200,10 +195,10 @@ TreeView.prototype = {
         while (pendingSearch.length > 0) {
           var node = pendingSearch.shift();
           //console.log("searching: " + node.name + " for: " + snapshot[0] + "\n");
-          if (!node.treeChildren)
+          if (!node.visibleChildren)
             continue;
-          for (var i = 0; i < node.treeChildren.length; i++) {
-            var childNode = node.treeChildren[i].getData();
+          for (var i = 0; i < node.visibleChildren.length; i++) {
+            var childNode = node.visibleChildren[i].getData();
             if (childNode.name == snapshot[0]) {
               //dump("found: " + childNode.name + "\n");
               snapshot.shift();
@@ -213,12 +208,11 @@ TreeView.prototype = {
               }
               var lastToggle = currNode;
               for (var j = 0; j < nodesToToggle.length; j++) {
-                for (var k = 0; k < lastToggle.treeChildren.length; k++) {
-                  if (lastToggle.treeChildren[k].data.name == nodesToToggle[j].name) {
+                for (var k = 0; k < lastToggle.visibleChildren.length; k++) {
+                  if (lastToggle.visibleChildren[k].data.name == nodesToToggle[j].name) {
                     //dump("Expend: " + nodesToToggle[j].name + "\n");
-                    this._toggle(lastToggle.treeChildren[k], false, true);
-                    lastToggle = lastToggle.treeChildren[k];
-                    this._syncProcessPendingActionProcessing();
+                    this._toggle(lastToggle.visibleChildren[k], false, true);
+                    lastToggle = lastToggle.visibleChildren[k];
                   }
                 }
               }
@@ -238,37 +232,8 @@ TreeView.prototype = {
       return;
     }
 
-    this._toggle(currNode, true, true);
+    this._toggle(currNode.rowObject, true, true);
     this._select(currNode);
-  },
-  _processPendingActionsChunk: function TreeView__processPendingActionsChunk(isSync) {
-    this._pendingActionsProcessingCallback = 0;
-
-    var startTime = Date.now();
-    var endTime = startTime + kMaxChunkDuration;
-    while ((isSync == true || Date.now() < endTime) && this._pendingActions.length > 0) {
-      this._processOneAction(this._pendingActions.shift());
-    }
-    this._schedulePendingActionProcessing();
-  },
-  _schedulePendingActionProcessing: function TreeView__schedulePendingActionProcessing() {
-    if (!this._pendingActionsProcessingCallback && this._pendingActions.length > 0) {
-      var self = this;
-      this._pendingActionsProcessingCallback = requestAnimationFrame(function () {
-        self._processPendingActionsChunk();
-      });
-    }
-  },
-  _syncProcessPendingActionProcessing: function TreeView__syncProcessPendingActionProcessing() {
-    this._processPendingActionsChunk(true);
-  },
-  _processOneAction: function TreeView__processOneAction(action) {
-    var li = this._createTree(action.parentElement, action.parentNode, action.data);
-    if ("allChildrenCollapsedValue" in action) {
-      if (this._abortToggleAll)
-        return;
-      this._toggleAll(li, action.allChildrenCollapsedValue, true);
-    }
   },
   addEventListener: function TreeView_addEventListener(eventName, callbackFunction) {
     if (!(eventName in this._eventListeners))
@@ -292,38 +257,158 @@ TreeView.prototype = {
       callbackFunction(eventObject);
     });
   },
-  _createTree: function TreeView__createTree(parentElement, parentNode, data) {
+  _initWithTreeAndCallback: function TreeView__initWithTreeAndCallback(tree, callback) {
+    var rootRowObject = {
+      parent: null,
+      depth: 0,
+      treeNode: tree,
+      data: null,
+      collapsed: true,
+      isLeaf: tree.children.length == 0,
+      visibleChildren: [],
+      numVisibleDescendants: 0
+    }
+    this._callback = callback;
+    this._treeNodes = rootRowObject;
+    this._treeRows = [rootRowObject];
+    this._scheduleRepaint();
+  },
+  _calculateRowIndex: function (rowObject) {
+    var parent = rowObject.parent;
+    if (!parent)
+      return 0;
+    var parentRowIndex = this._calculateRowIndex(parent);
+    var numPrecedingChildrenRows = 0;
+    var numVisibleChildren = parent.visibleChildren.length;
+    for (var i = 0; i < numVisibleChildren; i++) {
+      var currentChild = parent.visibleChildren[i];
+      if (rowObject == currentChild) {
+        return parentRowIndex + 1 + numPrecedingChildrenRows;
+      }
+      numPrecedingChildrenRows += 1 + currentChild.numVisibleDescendants;
+    }
+    throw new Error("row not found in visible rows of parent, _calculateRowIndex must not be called for invisible rows");
+  },
+  _ensureChildrenOnRowObject: function (rowObject) {
+    if (!("children" in rowObject)) {
+      rowObject.children = [];
+      for (var i = 0; i < rowObject.treeNode.children.length; i++) {
+        var child = rowObject.treeNode.children[i];
+        rowObject.children[i] = {
+          parent: rowObject,
+          depth: rowObject.depth + 1,
+          treeNode: child,
+          data: null,
+          collapsed: true,
+          isLeaf: child.children.length == 0,
+          visibleChildren: [],
+          numVisibleDescendants: 0
+        };
+      }
+    }
+    return rowObject.children;
+  },
+  _ensureDataOnRowObject: function (rowObject) {
+    if (rowObject.data === null) {
+      rowObject.data = this._callback(rowObject.treeNode);
+    }
+    return rowObject.data;
+  },
+  _propagateNumVisibleDescendantChangeAlongAncestorChain: function (rowObject, delta) {
+    while (rowObject !== null) {
+      rowObject.numVisibleDescendants += delta;
+      rowObject = rowObject.parent;
+    }
+  },
+  _uncollapse: function TreeView__uncollapse(rowObject, rowIndex) {
+    if (!rowObject.collapsed)
+      return;
+    if (rowIndex === undefined)
+      rowIndex = this._calculateRowIndex(rowObject);
+    var children = this._ensureChildrenOnRowObject(rowObject);
+    var numVisibleDescendants = 0;
+    var oldNumRows = this._treeRows.length;
+    for (var i = 0; i < children.length; i++) {
+      var child = children[i];
+      this._insertRowsForElementAndDescendants(child, /* atIndex = */ rowIndex + 1 + numVisibleDescendants);
+      numVisibleDescendants += 1 + child.numVisibleDescendants;
+      assert(this._treeRows.length == oldNumRows + numVisibleDescendants);
+    }
+    this._propagateNumVisibleDescendantChangeAlongAncestorChain(rowObject, numVisibleDescendants);
+    rowObject.collapsed = false;
+    rowObject.visibleChildren = rowObject.children;
+  },
+  _insertRowsForElementAndDescendants: function (rowObject, atIndex) {
+    this._treeRows.splice(atIndex, 0, rowObject);
+    var numInsertedDescendants = 0;
+    for (var i = 0; i < rowObject.visibleChildren.length; i++) {
+      var child = rowObject.visibleChildren[i];
+      this._insertRowsForElementAndDescendants(child, atIndex + 1 + numInsertedDescendants);
+      numInsertedDescendants += child.numVisibleDescendants;
+    }
+  },
+  _collapse: function TreeView__collapse(rowObject, rowIndex) {
+    if (rowObject.collapsed)
+      return;
+    if (rowIndex === undefined)
+      rowIndex = this._calculateRowIndex(rowObject);
+    var numRemovedRows = 0;
+    for (var i = 0; i < rowObject.visibleChildren.length; i++) {
+      var child = rowObject.visibleChildren[i];
+      this._removeRowsForElementAndDescendants(child, rowIndex + 1);
+      numRemovedRows += 1 + child.numVisibleDescendants;
+    }
+    assert(numRemovedRows == rowObject.numVisibleDescendants);
+    this._propagateNumVisibleDescendantChangeAlongAncestorChain(rowObject, -rowObject.numVisibleDescendants);
+    rowObject.collapsed = true;
+    rowObject.visibleChildren = [];
+  },
+  _removeRowsForElementAndDescendants: function (rowObject, atIndex) {
+    this._treeRows.splice(atIndex, 1 + rowObject.numVisibleDescendants);
+  },
+  _repaint: function () {
+    this._scheduledRepaint = null;
+    var r = this._treeOuterContainer.getBoundingClientRect();
+    var x = this._treeOuterContainer.scrollLeft;
+    var y = this._treeOuterContainer.scrollTop;
+    this._prepareContentInRect(x, y, r.width, r.height);
+  },
+  _scheduleRepaint: function () {
+    if (this._scheduledRepaint === null) {
+      this._scheduledRepaint = window.requestAnimationFrame(() => this._repaint());
+    }
+  },
+  _prepareContentInRect: function TreeView__prepareContentInRect(x, y, width, height) {
+    var startRow = Math.floor(y / this._rowHeight);
+    var endRow = Math.ceil((y + height) / this._rowHeight);
+    this._prepareRows(startRow, endRow);
+  },
+  _prepareRows: function TreeView__prepareRows(startRow, endRow) {
+    var numRows = this._treeRows.length;
+    startRow = Math.min(startRow, numRows - 1);
+    endRow = Math.min(endRow, numRows);
+    var numRowsAboveRenderedRange = startRow;
+    var numRowsBelowRenderedRange = numRows - endRow;
+    // this._treeInnerContainer.style.minWidth = this._treeInnerContainer.getBoundingClientRect().width + "px";
+    this._treeInnerContainer.style.marginTop = numRowsAboveRenderedRange * this._rowHeight + "px";
+    this._treeInnerContainer.style.marginBottom = numRowsBelowRenderedRange * this._rowHeight + "px";
+    this._treeInnerContainer.innerHTML = "";
+    for (var rowIndex = startRow; rowIndex < endRow; rowIndex++) {
+      var rowObject = this._treeRows[rowIndex];
+      var rowDOMElement = this._createTreeNodeElement(rowObject);
+      rowObject.domElement = rowDOMElement;
+      rowDOMElement.rowObject = rowObject;
+      this._treeInnerContainer.appendChild(rowDOMElement);
+    }
+  },
+  _createTreeNodeElement: function TreeView__createTreeNodeElement(treeRowObject) {
     var div = document.createElement("div");
-    div.className = "treeViewNode collapsed";
-    var hasChildren = ("children" in data) && (data.children.length > 0);
-    if (!hasChildren)
+    div.className = "treeViewNode";
+    if (treeRowObject.collapsed)
+      div.classList.add("collapsed");
+    if (treeRowObject.isLeaf)
       div.classList.add("leaf");
-    div.depth = parentNode ? parentNode.depth + 1 : 0;
-    div.innerHTML = this._HTMLForFunction(data, div.depth);
-    // When this item is toggled we will expand its children
-    div.pendingExpand = [];
-    div.data = data;
-    div.treeChildren = [];
-    div.treeParent = parentNode;
-    if (hasChildren) {
-      for (var i = 0; i < data.children.length; ++i) {
-        div.pendingExpand.push({parentElement: this._treeInnerContainer, parentNode: div, data: data.children[i].getData() });
-      }
-    }
-    if (parentNode) {
-      parentNode.treeChildren.push(div);
-    }
-    if (parentNode != null) {
-      var nextTo;
-      if (parentNode.treeChildren.length > 1) {
-        nextTo = parentNode.treeChildren[parentNode.treeChildren.length-2].nextSibling;
-      } else {
-        nextTo = parentNode.nextSibling;
-      }
-      parentElement.insertBefore(div, nextTo);
-    } else {
-      parentElement.appendChild(div);
-    }
+    div.innerHTML = this._HTMLForFunction(this._ensureDataOnRowObject(treeRowObject), treeRowObject.depth);
     return div;
   },
   _addResourceIconStyles: function TreeView__addResourceIconStyles() {
@@ -421,53 +506,29 @@ TreeView.prototype = {
       '<span class="libraryName">' + libName + '</span>' +
       '<span title="Focus Callstack" title="Focus Callstack" class="focusCallstackButton">';
   },
-  _resolveChildren: function TreeView__resolveChildren(div, childrenCollapsedValue) {
-    while (div.pendingExpand != null && div.pendingExpand.length > 0) {
-      var pendingExpand = div.pendingExpand.shift();
-      pendingExpand.allChildrenCollapsedValue = childrenCollapsedValue;
-      this._pendingActions.push(pendingExpand);
-      this._schedulePendingActionProcessing();
-    }
-  },
-  _showChild: function TreeView__showChild(div, isVisible) {
-    for (var i = 0; i < div.treeChildren.length; i++) {
-      div.treeChildren[i].style.display = isVisible?"":"none";
-      if (!isVisible) {
-        div.treeChildren[i].classList.add("collapsed");
-        this._showChild(div.treeChildren[i], isVisible);
-      }
-    }
-  },
-  _toggle: function TreeView__toggle(div, /* optional */ newCollapsedValue) {
-    var currentCollapsedValue = this._isCollapsed(div);
+  _toggle: function TreeView__toggle(rowObject, /* optional */ newCollapsedValue) {
+    var currentCollapsedValue = rowObject.collapsed;
     if (newCollapsedValue === undefined)
       newCollapsedValue = !currentCollapsedValue;
     if (newCollapsedValue) {
-      div.classList.add("collapsed");
-      this._showChild(div, false);
+      this._collapse(rowObject);
     } else {
-      this._resolveChildren(div, true);
-      div.classList.remove("collapsed");
-      this._showChild(div, true);
+      this._uncollapse(rowObject);
     }
+    this._scheduleRepaint();
   },
   _toggleAll: function TreeView__toggleAll(subtreeRoot, /* optional */ newCollapsedValue) {
-
-    // Reset abort
-    this._abortToggleAll = false;
-
     // Expands / collapses all child nodes, too.
-
     if (newCollapsedValue === undefined)
-      newCollapsedValue = !this._isCollapsed(subtreeRoot);
-    if (!newCollapsedValue) {
-      // expanding
-      this._resolveChildren(subtreeRoot, newCollapsedValue);
+      newCollapsedValue = !subtreeRoot.collapsed;
+    if (newCollapsedValue)
+      this._collapse(subtreeRoot);
+    else
+      this._uncollapse(subtreeRoot);
+    for (var i = 0; i < subtreeRoot.visibleChildren.length; ++i) {
+      this._toggleAll(subtreeRoot.visibleChildren[i], newCollapsedValue);
     }
-    this._toggle(subtreeRoot, newCollapsedValue, true);
-    for (var i = 0; i < subtreeRoot.treeChildren.length; ++i) {
-      this._toggleAll(subtreeRoot.treeChildren[i], newCollapsedValue, true);
-    }
+    this._scheduleRepaint();
   },
   _getParent: function TreeView__getParent(div) {
     return div.treeParent;
@@ -547,17 +608,17 @@ TreeView.prototype = {
     else if (bottomCutoff > 0)
       this._treeOuterContainer.scrollTop += Math.min(bottomCutoff, -topCutoff);
   },
-  _select: function TreeView__select(li) {
+  _select: function TreeView__select(div) {
     if (this._selectedNode != null) {
       this._selectedNode.classList.remove("selected");
       this._selectedNode = null;
     }
-    if (li) {
-      li.classList.add("selected");
-      this._selectedNode = li;
-      var functionName = li.querySelector(".functionName");
+    if (div) {
+      div.classList.add("selected");
+      this._selectedNode = div;
+      var functionName = div.querySelector(".functionName");
       this._scheduleScrollIntoView(functionName, 400);
-      this._fireEvent("select", li.data);
+      this._fireEvent("select", div.rowObject.data);
     }
     AppUI.updateDocumentURL();
   },
@@ -581,22 +642,20 @@ TreeView.prototype = {
       return;
     if (target.classList.contains("expandCollapseButton")) {
       if (event.altKey)
-        this._toggleAll(node);
+        this._toggleAll(node.rowObject);
       else
-        this._toggle(node);
+        this._toggle(node.rowObject);
     } else if (target.classList.contains("focusCallstackButton")) {
       this._fireEvent("focusCallstackButtonClicked", node.data);
     } else {
       this._select(node);
       if (event.detail == 2) // dblclick
-        this._toggle(node);
+        this._toggle(node.rowObject);
     }
   },
   _onkeypress: function TreeView__onkeypress(event) {
     if (event.ctrlKey || event.altKey || event.metaKey)
       return;
-
-    this._abortToggleAll = true;
 
     var selected = this._selectedNode;
     if (event.keyCode < 37 || event.keyCode > 40) {
@@ -612,7 +671,7 @@ TreeView.prototype = {
     if (event.keyCode == 37) { // KEY_LEFT
       var isCollapsed = this._isCollapsed(selected);
       if (!isCollapsed) {
-        this._toggle(selected);
+        this._toggle(selected.rowObject);
       } else {
         var parent = this._getParent(selected); 
         if (parent != null) {
@@ -630,8 +689,7 @@ TreeView.prototype = {
     } else if (event.keyCode == 39) { // KEY_RIGHT
       var isCollapsed = this._isCollapsed(selected);
       if (isCollapsed) {
-        this._toggle(selected);
-        this._syncProcessPendingActionProcessing();
+        this._toggle(selected.rowObject);
       } else {
         // Do KEY_DOWN only if the next element is a child
         var child = this._getFirstChild(selected);
@@ -648,7 +706,7 @@ TreeView.prototype = {
         this._select(nextSib);
       }
     } else if (String.fromCharCode(event.charCode) == '*') {
-      this._toggleAll(selected);
+      this._toggleAll(selected.rowObject);
     }
   },
 };

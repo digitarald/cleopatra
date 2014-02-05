@@ -142,17 +142,16 @@
       }
     },
     convertToJSTreeData: function ProfileTreeManager__convertToJSTreeData(rootNode, symbols, functions, useFunctions) {
-      var totalSamples = rootNode.counter;
-      function createTreeViewNode(node, parent) {
+      function createTreeViewNode(node) {
         var curObj = {};
-        curObj.parent = parent;
+        // curObj.parent = parent;
         curObj.counter = node.counter;
         var selfCounter = node.counter;
         for (var i = 0; i < node.children.length; ++i) {
           selfCounter -= node.children[i].counter;
         }
         curObj.selfCounter = selfCounter;
-        curObj.ratio = node.counter / totalSamples;
+        curObj.ratio = node.counter / rootNode.counter;
         curObj.fullFrameNamesAsInSample = node.mergedNames ? node.mergedNames : [node.name];
         if (!(node.name in (useFunctions ? functions : symbols))) {
           curObj.name = node.name;
@@ -171,26 +170,13 @@
             curObj.scriptLocation = functionObj.scriptLocation;
           }
         }
-        if (node.children.length) {
-          curObj.children = getChildrenObjects(node.children, curObj);
-        }
         return curObj;
       }
-      function getChildrenObjects(children, parent) {
-        var sortedChildren = children.slice(0).sort(treeObjSort);
-        return sortedChildren.map(function (child) {
-          var createdNode = null;
-          return {
-            getData: function () {
-              if (!createdNode) {
-                createdNode = createTreeViewNode(child, parent); 
-              }
-              return createdNode;
-            }
-          };
-        });
+      return {
+        nodeTree: rootNode, /* a tree where each node has a "children" property which is an array of nodes with the same property */
+        getDataForNode: createTreeViewNode
       }
-      return getChildrenObjects([rootNode], null);
+      // XXX children.sort(treeObjSort);
     },
     viewJSSource: function ProfileTreeManager_viewJSSource(sample) {
       var sourceView = new SourceView();
