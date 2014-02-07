@@ -75,6 +75,7 @@ function TreeView() {
   this._treeNodes = null;
   this._treeRows = [];
   this._callback = null;
+  this._displayedStuffIsInvalid = false;
 
   this._scheduledRepaint = null;
 
@@ -121,13 +122,11 @@ TreeView.prototype = {
   },
   display: function TreeView_display(data, resources, filterByName) {
     this._busyCover.classList.remove("busy");
-    this._filterByName = filterByName;
     this._resources = resources;
     this._addResourceIconStyles();
-    this._filterByNameReg = null; // lazy init
-    if (this._filterByName === "")
-      this._filterByName = null;
+    this._filterByNameReg = filterByName ? new RegExp("(" + RegExp.escape(filterByName) + ")","gi") : null;
     this._treeInnerContainer.innerHTML = "";
+    this._cachedRowRange = { start: 0, end: 0 };
     this._initWithTreeAndCallback(data.nodeTree, data.getDataForNode);
     AppUI.changeFocus(this._container);
   },
@@ -306,12 +305,16 @@ TreeView.prototype = {
         };
       }
     }
+    if (rowObject.data !== null)
+      delete rowObject.treeNode;
     return rowObject.children;
   },
   _ensureDataOnRowObject: function (rowObject) {
     if (rowObject.data === null) {
       rowObject.data = this._callback(rowObject.treeNode);
     }
+    if ("children" in rowObject)
+      delete rowObject.treeNode;
     return rowObject.data;
   },
   _propagateNumVisibleDescendantChangeAlongAncestorChain: function (rowObject, delta) {
@@ -379,36 +382,85 @@ TreeView.prototype = {
     }
   },
   _prepareContentInRect: function TreeView__prepareContentInRect(x, y, width, height) {
-    var startRow = Math.floor(y / this._rowHeight);
-    var endRow = Math.ceil((y + height) / this._rowHeight);
-    this._prepareRows(startRow, endRow);
+    var numRowsPerTile = 16; // make rows in tile increments
+    var startRow = Math.floor((y - height / 2) / this._rowHeight);
+    startRow = Math.floor(startRow / numRowsPerTile) * numRowsPerTile;
+    var numRows = Math.ceil(height * 2 / this._rowHeight / numRowsPerTile) * numRowsPerTile;
+    this._prepareRows(startRow, startRow + numRows);
   },
   _prepareRows: function TreeView__prepareRows(startRow, endRow) {
     var numRows = this._treeRows.length;
-    startRow = Math.min(startRow, numRows - 1);
+    startRow = Math.max(startRow, 0);
     endRow = Math.min(endRow, numRows);
+
+    if (!this._displayedStuffIsInvalid && this._cachedRowRange &&
+        this._cachedRowRange.start == startRow && this._cachedRowRange.end == endRow)
+      return;
+
     var numRowsAboveRenderedRange = startRow;
     var numRowsBelowRenderedRange = numRows - endRow;
-    // this._treeInnerContainer.style.minWidth = this._treeInnerContainer.getBoundingClientRect().width + "px";
-    this._treeInnerContainer.style.marginTop = numRowsAboveRenderedRange * this._rowHeight + "px";
-    this._treeInnerContainer.style.marginBottom = numRowsBelowRenderedRange * this._rowHeight + "px";
-    this._treeInnerContainer.innerHTML = "";
-    for (var rowIndex = startRow; rowIndex < endRow; rowIndex++) {
-      var rowObject = this._treeRows[rowIndex];
-      var rowDOMElement = this._createTreeNodeElement(rowObject);
-      rowObject.domElement = rowDOMElement;
-      rowDOMElement.rowObject = rowObject;
-      this._treeInnerContainer.appendChild(rowDOMElement);
+    this._treeInnerContainer.style.height = numRows * this._rowHeight + "px";
+    this._treeInnerContainer.style.width = "10000px";
+
+    var existingRows = this._treeInnerContainer.childNodes;
+    var newNeededRows = {};
+    var existingRowsToKeep = {};
+    var existingRowsToDiscard = {};
+    for (var i = 0; i < existingRows.length; i++) {
+      var row = existingRows[i];
+      var rowIndex = row.rowIndex;
+      if (rowIndex >= startRow && rowIndex < endRow) {
+        existingRowsToKeep[rowIndex] = row;
+        if (this._displayedStuffIsInvalid) {
+          this._updateTreeViewNodeContents(row, this._treeRows[rowIndex], rowIndex);
+        }
+      } else {
+        existingRowsToDiscard[rowIndex] = row;
+      }
     }
+    existingRows = null;
+
+    var rowIndicesOfRecyclableRows = Object.keys(existingRowsToDiscard);
+    var rowIndicesOfExistingRowsToKeep = Object.keys(existingRowsToKeep);
+    rowIndicesOfRecyclableRows.sort(function (a, b) { return a - b; });
+    rowIndicesOfExistingRowsToKeep.sort(function (a, b) { return a - b; });
+    var rowIndexOfFirstRowToKeep = rowIndicesOfExistingRowsToKeep.length > 0 ? rowIndicesOfExistingRowsToKeep[0] : -1;
+    var newRowIndices = [];
+    for (var rowIndexOfNewRow = startRow; rowIndexOfNewRow < endRow; rowIndexOfNewRow++) {
+      if (rowIndexOfNewRow in existingRowsToKeep)
+        continue;
+      newRowIndices.push(rowIndexOfNewRow);
+      var rowElem;
+      if (rowIndicesOfRecyclableRows.length > 0) {
+        var existingRowIndex = rowIndicesOfRecyclableRows.pop();
+        rowElem = existingRowsToDiscard[existingRowIndex];
+        delete existingRowsToDiscard[existingRowIndex];
+      } else {
+        rowElem = this._createEmptyTreeNodeElement();
+      }
+      this._updateTreeViewNodeContents(rowElem, this._treeRows[rowIndexOfNewRow], rowIndexOfNewRow);
+      rowElem.style.top = this._rowHeight * rowIndexOfNewRow + "px";
+      if (!rowElem.parentNode) {
+        this._treeInnerContainer.appendChild(rowElem);
+      }
+    }
+
+    for (var rowIndexOfRowToDiscard in existingRowsToDiscard) {
+      this._treeInnerContainer.removeChild(existingRowsToDiscard[rowIndexOfRowToDiscard]);
+    }
+
+    this._cachedRowRange = { start: startRow, end: endRow };
+    this._displayedStuffIsInvalid = false;
   },
-  _createTreeNodeElement: function TreeView__createTreeNodeElement(treeRowObject) {
+  _invalidateEverything: function () {
+    this._displayedStuffIsInvalid = true;
+    this._scheduleRepaint();
+  },
+  _createEmptyTreeNodeElement: function TreeView__createEmptyTreeNodeElement() {
     var div = document.createElement("div");
     div.className = "treeViewNode";
-    if (treeRowObject.collapsed)
-      div.classList.add("collapsed");
-    if (treeRowObject.isLeaf)
-      div.classList.add("leaf");
-    div.innerHTML = this._HTMLForFunction(this._ensureDataOnRowObject(treeRowObject), treeRowObject.depth);
+    div.innerHTML = this._treeViewNodeEmptyInnerHTML();
+    div.style.height = this._rowHeight + "px";
     return div;
   },
   _addResourceIconStyles: function TreeView__addResourceIconStyles() {
@@ -477,34 +529,42 @@ TreeView.prototype = {
     menu.push("Plugin View: Tree");
     return menu;
   },
-  _HTMLForFunction: function TreeView__HTMLForFunction(node, depth) {
-    var nodeName = escapeHTML(node.name);
-    var resource = this._resources[node.library] || {};
+  _treeViewNodeEmptyInnerHTML: function () {
+    return '' +
+      '<span class="rowLabel">' +
+      '  <span class="sampleCount"></span> ' +
+      '  <span class="samplePercentage"></span> ' +
+      '  <span class="selfSampleCount"></span> ' +
+      '  <span class="resourceIcon" data-resource=""></span> ' +
+      '</span>' +
+      '<span title="Expand / Collapse" class="expandCollapseButton"></span>' +
+      '<span class="functionName"></span>' +
+      '<span class="libraryName"></span>' +
+      '<span title="Focus Callstack" title="Focus Callstack" class="focusCallstackButton">';
+  },
+  _updateTreeViewNodeContents: function (elem, treeRowObject, rowIndex) {
+    var data = this._ensureDataOnRowObject(treeRowObject);
+    elem.classList.toggle("collapsed", treeRowObject.collapsed);
+    elem.classList.toggle("leaf", treeRowObject.isLeaf);
+    elem.classList.toggle("even", rowIndex % 2 == 0);
+    elem.classList.toggle("odd", rowIndex % 2 == 1);
+    var nodeName = escapeHTML(data.name);
+    var resource = this._resources[data.library] || {};
     var libName = escapeHTML(resource.name || "");
-    if (this._filterByName) {
-      if (!this._filterByNameReg) {
-        this._filterByName = RegExp.escape(this._filterByName);
-        this._filterByNameReg = new RegExp("(" + this._filterByName + ")","gi");
-      }
+    if (this._filterByNameReg) {
       nodeName = nodeName.replace(this._filterByNameReg, "<a style='color:red;'>$1</a>");
       libName = libName.replace(this._filterByNameReg, "<a style='color:red;'>$1</a>");
     }
-    var samplePercentage;
-    if (isNaN(node.ratio)) {
-      samplePercentage = "";
-    } else {
-      samplePercentage = (100 * node.ratio).toFixed(1) + "%";
-    }
-    //TODO: fix xss
-    return '' +
-      '<span class="sampleCount rowLabel">' + node.counter + '</span> ' +
-      '<span class="samplePercentage rowLabel">' + samplePercentage + '</span> ' +
-      '<span class="selfSampleCount rowLabel">' + node.selfCounter + '</span> ' +
-      '<span class="resourceIcon rowLabel" data-resource="' + node.library + '"></span> ' +
-      '<span title="Expand / Collapse" class="expandCollapseButton" style="margin-left:' + (depth+1) + 'em"></span>' +
-      '<span class="functionName">' + nodeName + '</span>' +
-      '<span class="libraryName">' + libName + '</span>' +
-      '<span title="Focus Callstack" title="Focus Callstack" class="focusCallstackButton">';
+    var samplePercentage = isNaN(data.ratio) ? "" : (100 * data.ratio).toFixed(1) + "%";
+    elem.getElementsByClassName("sampleCount")[0].textContent = data.counter;
+    elem.getElementsByClassName("samplePercentage")[0].textContent = samplePercentage;
+    elem.getElementsByClassName("selfSampleCount")[0].textContent = data.selfCounter;
+    elem.getElementsByClassName("resourceIcon")[0].setAttribute("data-resource", data.library);
+    elem.getElementsByClassName("expandCollapseButton")[0].style.marginLeft = (treeRowObject.depth + 1) + "em";
+    elem.getElementsByClassName("functionName")[0].innerHTML = nodeName;
+    elem.getElementsByClassName("libraryName")[0].innerHTML = libName;
+    elem.rowObject = treeRowObject;
+    elem.rowIndex = rowIndex;
   },
   _toggle: function TreeView__toggle(rowObject, /* optional */ newCollapsedValue) {
     var currentCollapsedValue = rowObject.collapsed;
@@ -515,20 +575,16 @@ TreeView.prototype = {
     } else {
       this._uncollapse(rowObject);
     }
-    this._scheduleRepaint();
+    this._invalidateEverything();
   },
   _toggleAll: function TreeView__toggleAll(subtreeRoot, /* optional */ newCollapsedValue) {
     // Expands / collapses all child nodes, too.
     if (newCollapsedValue === undefined)
       newCollapsedValue = !subtreeRoot.collapsed;
-    if (newCollapsedValue)
-      this._collapse(subtreeRoot);
-    else
-      this._uncollapse(subtreeRoot);
+    this._toggle(subtreeRoot, newCollapsedValue);
     for (var i = 0; i < subtreeRoot.visibleChildren.length; ++i) {
       this._toggleAll(subtreeRoot.visibleChildren[i], newCollapsedValue);
     }
-    this._scheduleRepaint();
   },
   _getParent: function TreeView__getParent(div) {
     return div.treeParent;

@@ -72,50 +72,61 @@
 .treeViewTreeInnerContainer {
   min-width: intrinsic;
   min-width: -moz-max-content;
+  position: relative;
 }
 
 .treeViewNode {
+  display: flex;
+  flex-flow: row nowrap;
+  position: absolute;
+  left: 0;
+  width: 100%;
   white-space: nowrap;
 }
-.treeViewNode:nth-child(2n+1) {
+.treeViewNode.even {
   background-color: white;
 }
-.treeViewNode:nth-child(2n) {
+.treeViewNode.odd {
   background-color: #f0f5ff;
 }
 
 .rowLabel {
-  background-color: inherit;
   position: -webkit-sticky;
   position: sticky;
+  left: 0;
+  width: 168px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-flow: row nowrap;
+  background-color: inherit;
   text-align: right;
 }
 
+.sampleCount,
+.samplePercentage,
+.selfSampleCount,
+.resourceIcon {
+  flex: 0 0 auto;
+}
 .sampleCount {
   padding-left: 2px;
   padding-right: 3px;
-  left: 0;
   width: 50px;
 }
 
 .samplePercentage {
-  left: 55px;
   padding-right:3px;
   width: 40px;
 }
 
 .selfSampleCount {
-  left: 98px;
-  width: 45px;
+  width: 46px;
   padding-right: 1px;
-  border: solid #CCC;
-  border-width: 0 1px;
+  border-left: 1px solid #CCC;
 }
 
 .resourceIcon {
-  left: 146px;
   width: 18px;
-  height: 16px;
   padding-right: 2px;
   border: solid #CCC;
   border-width: 0 1px;
@@ -127,11 +138,6 @@
 .libraryName {
   margin-left: 10px;
   color: #999;
-}
-
-.treeViewNode {
-  display: flex;
-  width: 100%;
 }
 
 .treeViewNode.selected {
