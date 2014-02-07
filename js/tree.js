@@ -132,10 +132,10 @@ TreeView.prototype = {
   },
   // Provide a snapshot of the reverse selection to restore with 'invert callback'
   getReverseSelectionSnapshot: function TreeView__getReverseSelectionSnapshot(isJavascriptOnly) {
-    if (!this._selectedNode)
+    if (!this._selectedRow)
       return;
     var snapshot = [];
-    var curr = this._selectedNode.data;
+    var curr = this._selectedRow.data;
 
     while(curr) {
       if (isJavascriptOnly && curr.isJSFrame || !isJavascriptOnly) {
@@ -154,7 +154,7 @@ TreeView.prototype = {
   // Provide a snapshot of the current selection to restore
   getSelectionSnapshot: function TreeView__getSelectionSnapshot(isJavascriptOnly) {
     var snapshot = [];
-    var curr = this._selectedNode;
+    var curr = this._selectedRow;
 
     while(curr) {
       if (isJavascriptOnly && curr.data.isJSFrame || !isJavascriptOnly) {
@@ -263,6 +263,7 @@ TreeView.prototype = {
       treeNode: tree,
       data: null,
       collapsed: true,
+      selected: true,
       isLeaf: tree.children.length == 0,
       visibleChildren: [],
       numVisibleDescendants: 0
@@ -299,6 +300,7 @@ TreeView.prototype = {
           treeNode: child,
           data: null,
           collapsed: true,
+          selected: false,
           isLeaf: child.children.length == 0,
           visibleChildren: [],
           numVisibleDescendants: 0
@@ -369,8 +371,23 @@ TreeView.prototype = {
   _removeRowsForElementAndDescendants: function (rowObject, atIndex) {
     this._treeRows.splice(atIndex, 1 + rowObject.numVisibleDescendants);
   },
+  _scrollRowIntoView: function (rowObject) {
+    // We might not have a DOM node for rowObject yet, so we can't measure its
+    // bounding client rect.
+    var rowIndex = this._calculateRowIndex(this._needToScrollIntoView);
+    this._scrollRangeIntoView({
+      top: rowIndex * this._rowHeight,
+      bottom: (rowIndex + 1) * this._rowHeight
+    });
+  },
   _repaint: function () {
     this._scheduledRepaint = null;
+
+    if (this._needToScrollIntoView) {
+      var rowIndex = this._calculateRowIndex(this._needToScrollIntoView);
+      this._scrollRowIntoView(this._needToScrollIntoView);
+    }
+
     var r = this._treeOuterContainer.getBoundingClientRect();
     var x = this._treeOuterContainer.scrollLeft;
     var y = this._treeOuterContainer.scrollTop;
@@ -393,10 +410,6 @@ TreeView.prototype = {
     startRow = Math.max(startRow, 0);
     endRow = Math.min(endRow, numRows);
 
-    if (!this._displayedStuffIsInvalid && this._cachedRowRange &&
-        this._cachedRowRange.start == startRow && this._cachedRowRange.end == endRow)
-      return;
-
     var numRowsAboveRenderedRange = startRow;
     var numRowsBelowRenderedRange = numRows - endRow;
     this._treeInnerContainer.style.height = numRows * this._rowHeight + "px";
@@ -413,6 +426,9 @@ TreeView.prototype = {
         existingRowsToKeep[rowIndex] = row;
         if (this._displayedStuffIsInvalid) {
           this._updateTreeViewNodeContents(row, this._treeRows[rowIndex], rowIndex);
+        }
+        if (row.rowObject == this._needToScrollIntoView) {
+          this._scrollIntoView(row.querySelector(".functionName"), 400);
         }
       } else {
         existingRowsToDiscard[rowIndex] = row;
@@ -439,6 +455,9 @@ TreeView.prototype = {
         rowElem = this._createEmptyTreeNodeElement();
       }
       this._updateTreeViewNodeContents(rowElem, this._treeRows[rowIndexOfNewRow], rowIndexOfNewRow);
+      if (rowElem.rowObject == this._needToScrollIntoView) {
+        this._scrollIntoView(rowElem.querySelector(".functionName"), 400);
+      }
       rowElem.style.top = this._rowHeight * rowIndexOfNewRow + "px";
       if (!rowElem.parentNode) {
         this._treeInnerContainer.appendChild(rowElem);
@@ -451,6 +470,7 @@ TreeView.prototype = {
 
     this._cachedRowRange = { start: startRow, end: endRow };
     this._displayedStuffIsInvalid = false;
+    this._needToScrollIntoView = false;
   },
   _invalidateEverything: function () {
     this._displayedStuffIsInvalid = true;
@@ -545,24 +565,29 @@ TreeView.prototype = {
   _updateTreeViewNodeContents: function (elem, treeRowObject, rowIndex) {
     var data = this._ensureDataOnRowObject(treeRowObject);
     elem.classList.toggle("collapsed", treeRowObject.collapsed);
+    elem.classList.toggle("selected", treeRowObject.selected);
     elem.classList.toggle("leaf", treeRowObject.isLeaf);
-    elem.classList.toggle("even", rowIndex % 2 == 0);
-    elem.classList.toggle("odd", rowIndex % 2 == 1);
-    var nodeName = escapeHTML(data.name);
-    var resource = this._resources[data.library] || {};
-    var libName = escapeHTML(resource.name || "");
-    if (this._filterByNameReg) {
-      nodeName = nodeName.replace(this._filterByNameReg, "<a style='color:red;'>$1</a>");
-      libName = libName.replace(this._filterByNameReg, "<a style='color:red;'>$1</a>");
+    if (elem.rowIndex % 2 != rowIndex % 2) {
+      elem.classList.toggle("even", rowIndex % 2 == 0);
+      elem.classList.toggle("odd", rowIndex % 2 == 1);
     }
-    var samplePercentage = isNaN(data.ratio) ? "" : (100 * data.ratio).toFixed(1) + "%";
-    elem.getElementsByClassName("sampleCount")[0].textContent = data.counter;
-    elem.getElementsByClassName("samplePercentage")[0].textContent = samplePercentage;
-    elem.getElementsByClassName("selfSampleCount")[0].textContent = data.selfCounter;
-    elem.getElementsByClassName("resourceIcon")[0].setAttribute("data-resource", data.library);
-    elem.getElementsByClassName("expandCollapseButton")[0].style.marginLeft = (treeRowObject.depth + 1) + "em";
-    elem.getElementsByClassName("functionName")[0].innerHTML = nodeName;
-    elem.getElementsByClassName("libraryName")[0].innerHTML = libName;
+    if (elem.rowObject != treeRowObject) {
+      var nodeName = escapeHTML(data.name);
+      var resource = this._resources[data.library] || {};
+      var libName = escapeHTML(resource.name || "");
+      if (this._filterByNameReg) {
+        nodeName = nodeName.replace(this._filterByNameReg, "<a style='color:red;'>$1</a>");
+        libName = libName.replace(this._filterByNameReg, "<a style='color:red;'>$1</a>");
+      }
+      var samplePercentage = isNaN(data.ratio) ? "" : (100 * data.ratio).toFixed(1) + "%";
+      elem.getElementsByClassName("sampleCount")[0].textContent = data.counter;
+      elem.getElementsByClassName("samplePercentage")[0].textContent = samplePercentage;
+      elem.getElementsByClassName("selfSampleCount")[0].textContent = data.selfCounter;
+      elem.getElementsByClassName("resourceIcon")[0].setAttribute("data-resource", data.library);
+      elem.getElementsByClassName("expandCollapseButton")[0].style.marginLeft = (treeRowObject.depth + 1) + "em";
+      elem.getElementsByClassName("functionName")[0].innerHTML = nodeName;
+      elem.getElementsByClassName("libraryName")[0].innerHTML = libName;
+    }
     elem.rowObject = treeRowObject;
     elem.rowIndex = rowIndex;
   },
@@ -643,39 +668,57 @@ TreeView.prototype = {
     if (maxImportantWidth === undefined)
       maxImportantWidth = Infinity;
 
+    var r = element.getBoundingClientRect();
+
+    this._scrollRangeIntoView({
+      left: r.left,
+      right: Math.min(r.right, r.left + maxImportantWidth),
+      top: r.top,
+      bottom: r.bottom
+    });
+  },
+  _scrollRangeIntoView: function TreeView__scrollIntoView(range) {
+    // range has left + right and/or top + bottom properties
+    // Make sure that the specified range is inside the visible part of our
+    // scrollbox by adjusting the scroll positions. If element is wider or
+    // higher than the scroll port, the left and top edges are prioritized over
+    // the right and bottom edges.
     var visibleRect = {
       left: this._treeInnerContainer.getBoundingClientRect().left + 150, // TODO: un-hardcode 150
       top: this._treeOuterContainer.getBoundingClientRect().top,
       right: this._treeInnerContainer.getBoundingClientRect().right,
       bottom: this._treeOuterContainer.getBoundingClientRect().bottom
     }
-    var r = element.getBoundingClientRect();
-    var right = Math.min(r.right, r.left + maxImportantWidth);
-    var leftCutoff = visibleRect.left - r.left;
-    var rightCutoff = right - visibleRect.right;
-    var topCutoff = visibleRect.top - r.top;
-    var bottomCutoff = r.bottom - visibleRect.bottom;
-    if (leftCutoff > 0)
-      this._treeInnerContainer.scrollLeft -= leftCutoff;
-    else if (rightCutoff > 0)
-      this._treeInnerContainer.scrollLeft += Math.min(rightCutoff, -leftCutoff);
-    if (topCutoff > 0)
-      this._treeOuterContainer.scrollTop -= topCutoff;
-    else if (bottomCutoff > 0)
-      this._treeOuterContainer.scrollTop += Math.min(bottomCutoff, -topCutoff);
+    if ("left" in range) {
+      var leftCutoff = visibleRect.left - range.left;
+      var rightCutoff = range.right - visibleRect.right;
+      if (leftCutoff > 0)
+        this._treeInnerContainer.scrollLeft -= leftCutoff;
+      else if (rightCutoff > 0)
+        this._treeInnerContainer.scrollLeft += Math.min(rightCutoff, -leftCutoff);
+    }
+    if ("top" in range) {
+      var topCutoff = visibleRect.top - range.top;
+      var bottomCutoff = range.bottom - visibleRect.bottom;
+      if (topCutoff > 0)
+        this._treeOuterContainer.scrollTop -= topCutoff;
+      else if (bottomCutoff > 0)
+        this._treeOuterContainer.scrollTop += Math.min(bottomCutoff, -topCutoff);
+    }
   },
   _select: function TreeView__select(div) {
-    if (this._selectedNode != null) {
-      this._selectedNode.classList.remove("selected");
-      this._selectedNode = null;
+    if (this._selectedRow != null) {
+      this._selectedRow.selected = false;
+      this._selectedRow = null;
     }
     if (div) {
-      div.classList.add("selected");
-      this._selectedNode = div;
-      var functionName = div.querySelector(".functionName");
-      this._scheduleScrollIntoView(functionName, 400);
-      this._fireEvent("select", div.rowObject.data);
+      var rowObject = div.rowObject;
+      rowObject.selected = true;
+      this._selectedRow = rowObject;
+      this._needToScrollIntoView = rowObject;
+      this._fireEvent("select", this._ensureDataOnRowObject(rowObject));
     }
+    this._scheduleRepaint();
     AppUI.updateDocumentURL();
   },
   _isCollapsed: function TreeView__isCollapsed(div) {
@@ -713,7 +756,7 @@ TreeView.prototype = {
     if (event.ctrlKey || event.altKey || event.metaKey)
       return;
 
-    var selected = this._selectedNode;
+    var selected = this._selectedRow;
     if (event.keyCode < 37 || event.keyCode > 40) {
       if (event.keyCode != 0 ||
           String.fromCharCode(event.charCode) != '*') {
