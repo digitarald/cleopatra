@@ -419,9 +419,9 @@ TreeView.prototype = {
     }
     //TODO: fix xss
     return '' +
-      '<span class="sampleCount rowLabel">' + node.counter + '</span> ' +
+      '<span class="sampleCount rowLabel">' + node.counter.toFixed(3) + '</span> ' +
       '<span class="samplePercentage rowLabel">' + samplePercentage + '</span> ' +
-      '<span class="selfSampleCount rowLabel">' + node.selfCounter + '</span> ' +
+      '<span class="selfSampleCount rowLabel">' + node.selfCounter.toFixed(3) + '</span> ' +
       '<span class="resourceIcon rowLabel" data-resource="' + node.library + '"></span> ' +
       '<span title="Expand / Collapse" class="expandCollapseButton" style="margin-left:' + (depth+1) + 'em"></span>' +
       '<span class="functionName">' + nodeName + '</span>' +
