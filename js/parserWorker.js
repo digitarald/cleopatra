@@ -262,15 +262,16 @@ function sendFinishedInChunks(requestID, result, maxChunkCost, costOfElementCall
   });
 }
 
-function makeSample(frames, extraInfo) {
+function makeSample(frames, extraInfo, weight) {
   return {
     frames: frames,
-    extraInfo: extraInfo
+    extraInfo: extraInfo,
+    weight: weight
   };
 }
 
 function cloneSample(sample) {
-  return makeSample(sample.frames.slice(0), sample.extraInfo);
+  return makeSample(sample.frames.slice(0), sample.extraInfo, sample.weight);
 }
 function parseRawProfile(requestID, params, rawProfile) {
   var progressReporter = new ProgressReporter();
@@ -558,7 +559,8 @@ function parseRawProfile(requestID, params, rawProfile) {
   function makeMissedSample(parentIndex, time) {
     return makeSample(
         [parentIndex, indexForSymbol("Missed")],
-        {time:time}
+        {time:time},
+        1
     );
   }
 
@@ -644,7 +646,7 @@ function parseRawProfile(requestID, params, rawProfile) {
       case 's':
         // sample
         var sampleName = info;
-        sample = makeSample([indexForSymbol(sampleName)], extraInfo);
+        sample = makeSample([indexForSymbol(sampleName)], extraInfo, 1);
         samples.push(sample);
         extraInfo = {}; // reset the extra info for future rounds
         break;
@@ -878,7 +880,7 @@ function parseRawProfile(requestID, params, rawProfile) {
           //dump("Got frame number: " + sample.frameNumber + "\n");
           frameStart[sample.frameNumber] = samples.length;
         }
-        samples.push(makeSample(indicedFrames, sample.extraInfo));
+        samples.push(makeSample(indicedFrames, sample.extraInfo, sample.weight || 1));
         // parsing samples is the first half
         progressReporter.setProgress((j + 1) / profileSamples.length / 2);
       }
@@ -988,10 +990,10 @@ TreeNode.prototype.followPath = function TreeNode_followPath(path) {
 
   return matchingChild.followPath(path.slice(1));
 };
-TreeNode.prototype.incrementCountersInParentChain = function TreeNode_incrementCountersInParentChain() {
-  this.counter++;
+TreeNode.prototype.augmentCountersInParentChain = function TreeNode_augmentCountersInParentChain(delta) {
+  this.counter += delta;
   if (this.parent)
-    this.parent.incrementCountersInParentChain();
+    this.parent.augmentCountersInParentChain(delta);
 };
 
 function convertToCallTree(samples, isReverse) {
@@ -1031,7 +1033,7 @@ function convertToCallTree(samples, isReverse) {
       callstack.reverse();
     var deepestExistingNode = treeRoot.followPath(callstack);
     var remainingCallstack = callstack.slice(deepestExistingNode.getDepth());
-    deepestExistingNode.incrementCountersInParentChain();
+    deepestExistingNode.augmentCountersInParentChain(sample.weight);
     var node = deepestExistingNode;
     for (var j = 0; j < remainingCallstack.length; ++j) {
       var frame = remainingCallstack[j];
@@ -1088,7 +1090,7 @@ function filterByCallstackPrefix(samples, symbols, functions, callstack, applies
         return null;
       j++;
     }
-    return makeSample(sample.frames.slice(i - 1), sample.extraInfo);
+    return makeSample(sample.frames.slice(i - 1), sample.extraInfo, sample.weight);
   });
 }
 
@@ -1113,7 +1115,7 @@ function filterByCallstackPostfix(samples, symbols, functions, callstack, applie
       j++;
     }
     var newFrames = sample.frames.slice(0, sample.frames.length - i + 1);
-    return makeSample(newFrames, sample.extraInfo);
+    return makeSample(newFrames, sample.extraInfo, sample.weight);
   });
 }
 
