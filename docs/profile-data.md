@@ -23,9 +23,11 @@ profiler.StartProfiler(
 );
 
 setTimeout(() => {
-  console.log(profiler.getProfileData());
-  // Stopping the profiler will delete the data.
-  profiler.StopProfiler();
+  profiler.getProfileDataAsync().then((profile) => {
+    // Stopping the profiler will delete the data.
+    profiler.StopProfiler();
+    console.log(profile);
+  });
 }, 500);
 ```
 
